@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qr_code_scanner/qr_code_scanner.dart';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 void main() => runApp(MyApp());
 
@@ -9,10 +9,6 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'QR Scanner',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-      ),
       home: QRViewExample(),
     );
   }
@@ -25,25 +21,19 @@ class QRViewExample extends StatefulWidget {
 
 class _QRViewExampleState extends State<QRViewExample> {
   final GlobalKey qrKey = GlobalKey(debugLabel: 'QR');
-  Barcode? result; // Cambiamos a Barcode? para permitir nulo
-  QRViewController?
-      controller; // Cambiamos a QRViewController? para permitir nulo
+  Barcode? result;
+  QRViewController? controller;
+  List<Map<String, dynamic>> userDataList = [];
 
   @override
-  void reassemble() {
-    super.reassemble();
-    if (controller != null) {
-      controller!.pauseCamera();
-      controller!.resumeCamera();
-    }
+  void initState() {
+    super.initState();
+    _getAllUserData(); // Carga los datos al iniciar la app
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('QR Scanner'),
-      ),
       body: Column(
         children: <Widget>[
           Expanded(
@@ -57,8 +47,7 @@ class _QRViewExampleState extends State<QRViewExample> {
             flex: 1,
             child: Center(
               child: (result != null)
-                  ? Text(
-                      'Barcode Type: ${result!.format}   Data: ${result!.code}')
+                  ? Text('QR Code: ${result!.code}')
                   : Text('Scan a code'),
             ),
           )
@@ -68,62 +57,86 @@ class _QRViewExampleState extends State<QRViewExample> {
   }
 
   void _onQRViewCreated(QRViewController controller) {
-    setState(() {
-      this.controller = controller;
-    });
+    this.controller = controller;
     controller.scannedDataStream.listen((scanData) async {
       setState(() {
         result = scanData;
       });
-      // Llamada a la API para validar el QR
-      final isValid = await _validateQRCode(result!.code!);
-      _showValidationDialog(isValid);
+      bool isValid = await _validateQRCode(scanData.code!);
+      if (isValid) {
+        _showDialog('Validación exitosa', 'El código QR es válido.');
+      } else {
+        _showDialog('Validación fallida',
+            'El código QR no es válido o ya ha sido escaneado.');
+      }
     });
   }
 
   Future<bool> _validateQRCode(String code) async {
-    final response = await http.get(
-      Uri.parse('https://ufidelitas.ac.cr/wp-json/nf-submissions/v1/form/114'),
-      headers: {
-        'NF-REST-Key':
-            'a2d3f2da9fc9413786ec10b8a3914bab17871fff814f7d91003437d398b22d9',
-        'Accept': 'application/json',
-        'Cookie':
-            'AWSALB=TuN6b4jLAMOWc8ThDV64QmqJ+P+ujWjBSJfJpea8AhAEoUQH54jU...'
-      },
-    );
-
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      // Aquí puedes implementar la lógica específica para validar el código QR.
-      for (var submission in data['submissions']) {
-        if (submission['_field_977'] == code) {
-          return true;
-        }
+    try {
+      if (userDataList.isEmpty) {
+        print('Cargando datos de usuario...');
+        await _getAllUserData();
       }
+      print('Usuarios cargados: ${userDataList.length}');
+      bool found = userDataList.any((user) {
+        print('Comparando ${user['_field_2253']} con $code');
+        return user['_field_2253'].toString() == code;
+      });
+      if (found) {
+        print('Código QR válido y no previamente escaneado.');
+      }
+      print('Resultado de la validación: $found');
+      return found;
+    } catch (e) {
+      print('Error al validar el QR: $e');
+      return false;
     }
-    return false;
   }
 
-  void _showValidationDialog(bool isValid) {
+// Remove the duplicate declaration of userDataList
+  Future<void> _getAllUserData() async {
+    const url = 'https://ufidelitas.ac.cr/wp-json/nf-submissions/v1/form/114';
+    try {
+      // Agrega el encabezado NF-REST-Key a tu solicitud
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'NF-REST-Key':
+              'a2d3f2da9fc9413766ce10b6a3914bab178711ff8144f7d91003437d398b22d9',
+        },
+      );
+      final data = json.decode(response.body);
+      if (data is Map) {
+        if (data.containsKey('submissions') && data['submissions'] is List) {
+          userDataList = List<Map<String, dynamic>>.from(data['submissions']);
+        } else {
+          userDataList = [];
+        }
+      } else {
+        userDataList = [];
+      }
+      print('Datos de usuario cargados: ${userDataList.length}');
+    } catch (e) {
+      print('Error al obtener datos de usuario: $e');
+    }
+  }
+
+  void _showDialog(String title, String content) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(isValid ? 'Valid' : 'Invalid'),
-          content: Text(isValid
-              ? 'The QR code is valid.'
-              : 'The QR code is invalid or already used.'),
-          actions: <Widget>[
-            TextButton(
-              child: Text('OK'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: <Widget>[
+          TextButton(
+            child: Text('OK'),
+            onPressed: () {
+              Navigator.of(context).pop();
+            },
+          ),
+        ],
+      ),
     );
   }
 
